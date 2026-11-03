@@ -1,0 +1,19 @@
+{
+  "name": "scan-game-passports",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RPM-programmer/scan-game-passports.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/RPM-programmer/scan-game-passports/issues"
+  },
+  "homepage": "https://github.com/RPM-programmer/scan-game-passports#readme"
+}
