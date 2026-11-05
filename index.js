@@ -1,45 +1,73 @@
 const Tesseract = require("tesseract.js");
-const { findGreenAnchorCoordinates } = require("./format");
-const { parseOcrTextToFields } = require("./get");
+const sharp = require("sharp");
+const path = require("path");
+const { processAndCropSheet } = require("./format");
+const { buildDynamicJson } = require("./get");
 
-/**
- * Основная функция сканирования игрового паспорта А7
- * @param {Buffer} imageBuffer - Загруженный файл фотографии
- */
-async function scanGamePassportA7(imageBuffer) {
+async function scanGamePassportA7(imageBuffer, options = { lang: "rus+eng" }) {
   try {
-    // Шаг 1: Ищем зеленую точку-ориентир для проверки валидности бланка
-    const anchor = findGreenAnchorCoordinates(imageBuffer);
-    if (!anchor) {
+    const tesseractLang = options.lang || "rus+eng";
+
+    const imageInfo = await sharp(imageBuffer)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const rawImageData = {
+      data: imageInfo.data,
+      width: imageInfo.info.width,
+      height: imageInfo.info.height,
+    };
+
+    const { foundPoints, lineBuffers } =
+      await processAndCropSheet(rawImageData);
+
+    if (lineBuffers.length === 0) {
       return {
         success: false,
         error:
-          "Зеленый маркер-якорь не обнаружен. Убедитесь, что бланк попал в кадр нужной стороной.",
+          "Маркеры-точки не обнаружены. Не удалось локализовать строки бланка.",
       };
     }
 
-    // Шаг 2: Прогоняем буфер через локальный OCR движок
-    const ocrResult = await Tesseract.recognize(imageBuffer, "rus+eng", {
-      tessedit_pageseg_mode: "6", // Обработка страницы как единого блока строк текста
+    const recognizedTextLines = [];
+
+    // Полностью автономный запуск: указываем путь к нашей локальной папке ./tessdata
+    const worker = await Tesseract.createWorker(tesseractLang, 1, {
+      langPath: path.join(__dirname, "tessdata"),
+      cacheMethod: "none", // Отключаем кэширование в системные папки, работаем строго по месту
     });
 
-    // Шаг 3: Собираем текст в структурированный JSON с обработкой опечаток штампа
-    const structuredFields = parseOcrTextToFields(ocrResult.data.text);
+    for (let i = 0; i < lineBuffers.length; i++) {
+      const lineBuf = lineBuffers[i];
+
+      const lineJpeg = await sharp(lineBuf.data, {
+        raw: { width: lineBuf.width, height: lineBuf.height, channels: 4 },
+      })
+        .jpeg()
+        .toBuffer();
+
+      const ocrLineResult = await worker.recognize(lineJpeg, {
+        tessedit_pageseg_mode: "7",
+      });
+
+      recognizedTextLines.push(ocrLineResult.data.text.trim());
+    }
+
+    await worker.terminate();
+
+    const finalJsonData = buildDynamicJson(recognizedTextLines);
 
     return {
       success: true,
-      anchorFound: anchor,
-      data: structuredFields,
+      detected_points_count: foundPoints.length,
+      payload: finalJsonData,
     };
   } catch (error) {
     return {
       success: false,
-      error:
-        "Внутренняя ошибка обработки scan-game-passports: " + error.message,
+      error: "Ошибка универсального сканирования: " + error.message,
     };
   }
 }
 
-module.exports = {
-  scanGamePassportA7,
-};
+module.exports = { scanGamePassportA7 };

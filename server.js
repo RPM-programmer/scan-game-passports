@@ -1,17 +1,23 @@
 const express = require("express");
 const multer = require("multer");
-// Подключаем точку входа нашего собранного модуля
+const cors = require("cors");
 const { scanGamePassportA7 } = require("./index");
 
 const router = express.Router();
 
-// Конфигурируем multer для работы с оперативной памятью (Buffer)
+router.use(
+  cors({
+    origin: "*",
+    methods: ["POST", "GET", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // Ограничение на размер снимка — 10 МБ
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-// Эндпоинт сканирования игрового паспорта
 router.post("/scan-game", upload.single("passport_file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -20,18 +26,16 @@ router.post("/scan-game", upload.single("passport_file"), async (req, res) => {
         .json({ success: false, error: "Файл изображения не передан." });
     }
 
-    // Запуск конвейера обработки документа
-    const ocrResult = await scanGamePassportA7(req.file.buffer);
+    const ocrResult = await scanGamePassportA7(req.file.buffer, { lang: "en" });
 
     if (!ocrResult.success) {
       return res.status(400).json({ success: false, error: ocrResult.error });
     }
 
-    // Возвращаем отфильтрованный JSON в основное приложение CMS
     res.json({
       success: true,
-      anchor: ocrResult.anchorFound,
-      payload: ocrResult.data,
+      detected_points_count: ocrResult.detected_points_count,
+      payload: ocrResult.payload,
     });
   } catch (err) {
     res
@@ -43,5 +47,4 @@ router.post("/scan-game", upload.single("passport_file"), async (req, res) => {
   }
 });
 
-// Экспортируем только роутер по стандарту CommonJS
 module.exports = router;

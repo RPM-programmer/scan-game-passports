@@ -15,5 +15,10 @@
   "bugs": {
     "url": "https://github.com/RPM-programmer/scan-game-passports/issues"
   },
-  "homepage": "https://github.com/RPM-programmer/scan-game-passports#readme"
+  "homepage": "https://github.com/RPM-programmer/scan-game-passports#readme",
+  "dependencies": {
+    "@techstark/opencv-js": "^5.0.0-release.1",
+    "sharp": "^0.35.5",
+    "tesseract.js": "^7.0.0"
+  }
 }

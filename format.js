@@ -1,72 +1,100 @@
-const cv = require("@techstark/opencv-js");
+const cvModule = require("@techstark/opencv-js");
 
-/**
- * Поиск координат зеленой точки-якоря через HSV-фильтрацию
- * @param {Buffer} imageBuffer - Бинарные данные картинки
- */
-function findGreenAnchorCoordinates(imageBuffer) {
-  let src = cv.matFromImageData(imageBuffer);
+async function getOpenCV() {
+  if (cvModule instanceof Promise) return await cvModule;
+  if (cvModule.Mat) return cvModule;
+  return new Promise((resolve) => {
+    cvModule.onRuntimeInitialized = () => resolve(cvModule);
+  });
+}
+
+async function processAndCropSheet(rawImageData) {
+  const cv = await getOpenCV();
+
+  let src = cv.matFromImageData({
+    data: new Uint8ClampedArray(rawImageData.data),
+    width: rawImageData.width,
+    height: rawImageData.height,
+  });
+
   let hsv = new cv.Mat();
   let mask = new cv.Mat();
-  let contours = new cv.MatVector();
+  let anchorContours = new cv.MatVector();
   let hierarchy = new cv.Mat();
 
   cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
   cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
 
-  // Границы зеленого цвета (в диапазоне HSV отсекаем кляксы синего штампа, красный цвет и чернила)
-  let lowGreen = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [35, 50, 50, 0]);
-  let highGreen = new cv.Mat(
-    hsv.rows,
-    hsv.cols,
-    hsv.type(),
-    [85, 255, 255, 255],
-  );
+  let lowColor = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0, 0, 0, 0]);
+  let highColor = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [180, 255, 65, 0]);
 
-  cv.inRange(hsv, lowGreen, highGreen, mask);
+  cv.inRange(hsv, lowColor, highColor, mask);
   cv.findContours(
     mask,
-    contours,
+    anchorContours,
     hierarchy,
     cv.RETR_EXTERNAL,
     cv.CHAIN_APPROX_SIMPLE,
   );
 
-  let anchorPoint = null;
+  let foundPoints = [];
 
-  for (let i = 0; i < contours.size(); ++i) {
-    let cnt = contours.get(i);
+  for (let i = 0; i < anchorContours.size(); ++i) {
+    let cnt = anchorContours.get(i);
     let rect = cv.boundingRect(cnt);
     let aspectRatio = rect.width / rect.height;
 
-    // Поиск зеленого маркера диаметром от 12 до 40 пикселей близкой к кругу формы
     if (
-      rect.width >= 12 &&
-      rect.width <= 40 &&
-      aspectRatio >= 0.7 &&
-      aspectRatio <= 1.3
+      rect.width >= 2 &&
+      rect.width <= 35 &&
+      aspectRatio >= 0.4 &&
+      aspectRatio <= 2.2
     ) {
       let moments = cv.moments(cnt, false);
-      anchorPoint = {
-        x: Math.round(moments.m10 / moments.m00),
-        y: Math.round(moments.m01 / moments.m00),
-      };
-      break;
+      if (moments.m00 !== 0) {
+        foundPoints.push({
+          x: Math.round(moments.m10 / moments.m00),
+          y: Math.round(moments.m01 / moments.m00),
+        });
+      }
     }
   }
 
-  // Освобождение памяти матриц OpenCV
+  foundPoints.sort((a, b) => a.y - b.y);
+
+  let lineBuffers = [];
+  foundPoints.forEach((point) => {
+    let startY = Math.max(0, point.y - 20);
+    let startX = Math.max(0, point.x - 450);
+    let width = Math.min(440, src.cols - startX);
+    let height = Math.min(40, src.rows - startY);
+
+    if (width > 50 && height > 10) {
+      let rectRoi = new cv.Rect(startX, startY, width, height);
+      let lineRoi = src.roi(rectRoi);
+
+      let lineData = new Uint8Array(lineRoi.cols * lineRoi.rows * 4);
+      let matData = lineRoi.data;
+      for (let i = 0; i < matData.length; i++) lineData[i] = matData[i];
+
+      lineBuffers.push({
+        data: Buffer.from(lineData),
+        width: lineRoi.cols,
+        height: lineRoi.rows,
+      });
+      lineRoi.delete();
+    }
+  });
+
   src.delete();
   hsv.delete();
   mask.delete();
-  contours.delete();
+  anchorContours.delete();
   hierarchy.delete();
-  lowGreen.delete();
-  highGreen.delete();
+  lowColor.delete();
+  highColor.delete();
 
-  return anchorPoint;
+  return { foundPoints, lineBuffers };
 }
 
-module.exports = {
-  findGreenAnchorCoordinates,
-};
+module.exports = { processAndCropSheet };
